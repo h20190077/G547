@@ -1,14 +1,17 @@
 #include<linux/kernel.h>
 #include<linux/module.h>
-#include<linux/usb.h>		//handles all usb functionality in kernel
+#include<linux/usb.h>
 #include<linux/timer.h>
 #include<linux/slab.h>
 
+#define CARD_READER_VID  0x13fe
+#define CARD_READER_PID  0x4300
 
-#define CARD_READER_VID  0x03f0
-#define CARD_READER_PID  0x5a07
+#define SAMSUNG_MEDIA_VID  0x04e8
+#define SAMSUNG_MEDIA_PID  0x6860
 
-
+#define NXP_KEIL_VID 0xc251
+#define NXP_MSD_PID 0x1303
 
 #define USB_EP_IN                     0x80
 #define RETRY_MAX                     5
@@ -27,7 +30,6 @@ int send_mass_storage_command(struct usb_device*, uint8_t, uint8_t,uint8_t*, uin
 int get_mass_storage_status(struct usb_device*, uint8_t, uint32_t);
 int test_mass_storage(struct usb_device*, uint8_t, uint8_t);
 
-//Command Block Wrapper (CBW)
 struct command_block_wrapper {
 	uint8_t dCBWSignature[4];
 	uint32_t dCBWTag;
@@ -67,6 +69,7 @@ static uint8_t cdb_length[256] = {
 };
 
 
+
 struct usbdev_private
 {
 	struct usb_device *udev;
@@ -79,17 +82,21 @@ struct usbdev_private
 
 struct usbdev_private *p_usbdev_info;
 
-
-static struct usb_device_id usbdev_table [] = 
+static void usbdev_disconnect(struct usb_interface *interface)
 {
-	{USB_DEVICE(CARD_READER_VID,CARD_READER_PID)},
-	{} //terminating entry	
+	printk(KERN_INFO "USBDEV Device Removed\n");
+	return;
+}
+
+static struct usb_device_id usbdev_table [] = {
+	{USB_DEVICE(CARD_READER_VID, CARD_READER_PID)},
+	{USB_DEVICE(SAMSUNG_MEDIA_VID, SAMSUNG_MEDIA_PID)},
+	{USB_DEVICE(NXP_KEIL_VID, NXP_MSD_PID)},
+	{} /*terminating entry*/	
 };
 
 
- ///////////////////////////////////This function wraps cdb in cbw and sends it over endpoint//////////////////////////////////////
-
-int send_mass_storage_command(struct usb_device *device, uint8_t endpoint_out, uint8_t lun,uint8_t *cdb, uint8_t direction, int data_length, uint32_t *ret_tag)  
+int send_mass_storage_command(struct usb_device *device, uint8_t endpoint_out, uint8_t lun,uint8_t *cdb, uint8_t direction, int data_length, uint32_t *ret_tag)  /// this function wraps cdb in cbw and sends it over endpoint
 {
 	static uint32_t tag = 1;
 	uint8_t cdb_len;
@@ -98,7 +105,7 @@ int send_mass_storage_command(struct usb_device *device, uint8_t endpoint_out, u
 	cbw = (struct command_block_wrapper*)kmalloc(sizeof(struct command_block_wrapper), GFP_KERNEL);
 	
 	if ( cbw == NULL ) {
-		printk(KERN_INFO "Failed to allocate memory\n");
+		printk(KERN_INFO "Cannot allocate memory\n");
 		return -1;}
 
 	if (cdb == NULL) {
@@ -125,7 +132,7 @@ int send_mass_storage_command(struct usb_device *device, uint8_t endpoint_out, u
 
 	i = 0;
 	do {
-		//////////////////////////////The transfer length must always be exactly 31 bytes.///////////////////////////////
+		// The transfer length must always be exactly 31 bytes.
 		r= usb_bulk_msg(device,usb_sndbulkpipe(device,endpoint_out), (unsigned char*)cbw, 31, &size, 1000);
 
 		if (r != 0) 
@@ -144,21 +151,20 @@ int send_mass_storage_command(struct usb_device *device, uint8_t endpoint_out, u
 		return -1;
 	}
 	
-	printk(KERN_INFO"sent %d CDB bytes\n", cdb_len);
+	printk(KERN_INFO"   sent %d CDB bytes\n", cdb_len);
 
 	kfree(cbw);
 	return 0;
 }
 
-int get_mass_storage_status(struct usb_device *device, uint8_t endpoint, uint32_t expected_tag)  
-//////////////////////////////////reading CSW from device on bulk IN endpoint/////////////////////////////////////////
+int get_mass_storage_status(struct usb_device *device, uint8_t endpoint, uint32_t expected_tag)  ///reading CSW from device on bulk IN endpoint
 {
 	int i, r, size;
 	struct command_status_wrapper *csw;
 
 	if( !(csw = (struct command_status_wrapper*)kmalloc(sizeof(struct command_status_wrapper), GFP_KERNEL)) ) 
 	{
-		printk(KERN_INFO "Cannot allocate memory for command status buffer(CSW)\n");
+		printk(KERN_INFO "Cannot allocate memory for command status buffer\n");
 		return -1;
 	}
 	
@@ -186,9 +192,10 @@ int test_mass_storage(struct usb_device *device, uint8_t endpoint_in, uint8_t en
 	uint32_t expected_tag;
 	long max_lba, block_size;
 	long device_size;
-	uint8_t cdb[16];	// SCSI CDB sent through the function
+	uint8_t cdb[16];	// SCSI Command Descriptor Block the SCSI command that we want to send
 	uint8_t *buffer=NULL;
-	
+	//char vid[9], pid[9], rev[5];
+	//unsigned char *data;
 	
 
 	if ( !(buffer = (uint8_t *)kmalloc(sizeof(uint8_t)*64, GFP_KERNEL)) ) {
@@ -206,7 +213,7 @@ int test_mass_storage(struct usb_device *device, uint8_t endpoint_in, uint8_t en
 	if(r < 0)
 		printk(KERN_INFO "Cannot reset\n");
 	else
-		printk(KERN_INFO "Reset  done\n");
+		printk(KERN_INFO "Reset has been done\n");
 
 	if( send_mass_storage_command(device,endpoint_out,lun,cdb,USB_EP_IN,READ_CAPACITY_LENGTH,&expected_tag) != 0 ) {
 		printk(KERN_INFO"Send command error\n");
@@ -228,10 +235,9 @@ int test_mass_storage(struct usb_device *device, uint8_t endpoint_in, uint8_t en
 	max_lba = be_to_int32(buffer);
 	block_size = be_to_int32(buffer+4);
 	device_size = ((int)(max_lba+1))*block_size/(1024*1024*1024);
-	
+	//printk(KERN_INFO"   Max LBA: %08X, Block Size: %08X (%08X GB)\n", max_lba, block_size, device_size);
 
-
-	printk(KERN_INFO "Connected Device Size is: %ld GB\n",device_size);
+	printk(KERN_INFO "Device Size: %ld GB\n",device_size);
 	kfree(buffer);
 	
 
@@ -239,33 +245,31 @@ int test_mass_storage(struct usb_device *device, uint8_t endpoint_in, uint8_t en
 
 	return 0;
 }
-
 static int usbdev_probe(struct usb_interface *interface, const struct usb_device_id *id)
 {
 	int i;
 	unsigned char epAddr, epAttr;
-	unsigned char endpoint_in = 0, endpoint_out = 0;
-	struct usb_device *device;
+	//struct usb_host_interface *if_desc;
 	struct usb_endpoint_descriptor *ep_desc;
-	device = interface_to_usbdev(interface);
+       // struct usb_device_descriptor descriptor ;
 	
 	if(id->idProduct == CARD_READER_PID)
 	{
 		printk(KERN_INFO "********Known USB drive detected**********\n");
 	}
 	else 
-	{	
-		printk(KERN_INFO "Unknown Media plugged in\n");
+	{
+		printk(KERN_INFO "Unknown Media Plugged in\n");
 	}
-	
 
+	printk(KERN_INFO "########reading from  descriptors and printing the information in log######### \n");	
+        printk(KERN_INFO "Product ID is %x \n",id->idProduct);
+	printk(KERN_INFO "Vendor ID is %x\n",id->idVendor);
 	
-	printk(KERN_INFO "########reading from  descriptors and printing the information in log######### \n");
-	printk(KERN_INFO "Product ID is %x \n",id->idProduct);
-	printk(KERN_INFO "Vendor ID is %x\n",id->idVendor);	
+	//if_desc = interface->cur_altsetting;
 	printk(KERN_INFO "No. of Altsettings = %d\n",interface->num_altsetting);
-
-	
+        printk(KERN_INFO "No. of Endpoints = %d\n", interface->cur_altsetting->desc.bNumEndpoints);
+     
 
 	for(i=0;i<interface->cur_altsetting->desc.bNumEndpoints;i++)
 	{
@@ -275,34 +279,22 @@ static int usbdev_probe(struct usb_interface *interface, const struct usb_device
 	
 		if((epAttr & USB_ENDPOINT_XFERTYPE_MASK)==USB_ENDPOINT_XFER_BULK)
 		{
-			if(epAddr & USB_EP_IN)
-			{	
-				endpoint_in = epAddr;
-				printk(KERN_INFO "EP %d is Bulk IN \n",i);
-				printk(KERN_INFO "address %d\n",endpoint_in);
-                                
-			}		
-	
+			if(epAddr & 0x80)
+				printk(KERN_INFO "EP %d is Bulk IN\n", i);
 			else
-			{
-				endpoint_out = epAddr; 		
-				printk(KERN_INFO "EP %d is Bulk OUT \n",i);
-				printk(KERN_INFO "address %d\n",endpoint_out);
-
-				
-			}
+				printk(KERN_INFO "EP %d is Bulk OUT\n", i);
+	
 		}
 
 	}
-
-
-	printk(KERN_INFO "No. of Endpoints = %d\n", interface->cur_altsetting->desc.bNumEndpoints);
+	//this line causing error
+	//p_usbdev_info->class = interface->cur_altsetting->desc.bInterfaceClass;
+	
 	printk(KERN_INFO "USB DEVICE CLASS : %x", interface->cur_altsetting->desc.bInterfaceClass);
 	printk(KERN_INFO "USB DEVICE SUB CLASS : %x", interface->cur_altsetting->desc.bInterfaceSubClass);
 	printk(KERN_INFO "USB DEVICE Protocol : %x", interface->cur_altsetting->desc.bInterfaceProtocol);
-	//this line causing error
-	//p_usbdev_info->class = interface->cur_altsetting->desc.bInterfaceClass;
-	if((interface->cur_altsetting->desc.bInterfaceSubClass == 0x06) && (interface->cur_altsetting->desc.bInterfaceProtocol == 0x50))
+        
+       if((interface->cur_altsetting->desc.bInterfaceSubClass == 0x06) && (interface->cur_altsetting->desc.bInterfaceProtocol == 0x50))
 		{
 			printk(KERN_INFO "USB Attached SCSI device connected\n");
 		}	
@@ -311,33 +303,22 @@ static int usbdev_probe(struct usb_interface *interface, const struct usb_device
 			printk(KERN_INFO "non USB attached SCSI device \n");
 		}
 
-	
-
-	if(test_mass_storage(device,endpoint_in,endpoint_out)!=0)
-	{ 
-		printk(KERN_INFO"error \n");
-		return -1;
-	}
-
-	return 0;
+return 0;
 }
 
-static void usbdev_disconnect(struct usb_interface *interface)
-{
-	printk(KERN_INFO "USBDEV Device Removed\n");
-}
 
-/*operation structure*/
+
+/*Operations structure*/
 static struct usb_driver usbdev_driver = {
-	name: "USB_DEVICE",//name of the device
-	probe: usbdev_probe,//whenever device is plugged in
-	disconnect: usbdev_disconnect,//when we remove a device
-	id_table: usbdev_table,//list of devices served by this driver
+	name: "USB_DEVICE",  //name of the device
+	probe: usbdev_probe, // Whenever Device is plugged in
+	disconnect: usbdev_disconnect, // When we remove a device
+	id_table: usbdev_table, //  List of devices served by this driver
 };
 
 
 int device_init(void)
-{	
+{
 	usb_register(&usbdev_driver);
         printk(KERN_INFO "******UAS READ Capacity Driver Inserted*******\n");
 	return 0;
@@ -347,7 +328,7 @@ void device_exit(void)
 {
 	usb_deregister(&usbdev_driver);
 	printk(KERN_NOTICE "Leaving Kernel\n");
- 	printk(KERN_INFO "*******Leaving Kernel*******\n");
+        printk(KERN_INFO "*******Leaving Kernel*******\n");
 	//return 0;
 }
 
