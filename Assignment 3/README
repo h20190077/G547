@@ -1,0 +1,46 @@
+
+	***********************************  ASSIGNMENT 3 *****************************************************************************
+	********************************* DEVICE DRIVER G547 **************************************************************************
+
+1. Compile the source code and Make file using make all.
+
+2. Insert the module using sudo insmod main.ko.
+
+3. Insert the pendrive.
+
+4. Remove the already existing driver using 
+	1. sudo rmmod uas.
+
+	2. sudo rmmod usb_storage.
+
+5. To check the usb driver got added using sudo fdisk -l.
+
+6. Create a directory in media sudo mkdir /media/rusb
+
+7. Mount USB driver into media 
+	sudo mount -t vfat /dev/myDriver1/media/rusb
+
+   //device mount  operation  happen in the kernel log.
+
+8. sudo -i (to go to root folder).
+
+9. cd /media/rusb .
+
+10. ls (Check the usb content).
+
+11. echo anshu > text.txt (File gets created).
+    
+12. cat text.txt ( Read the contents of the file).
+
+13. cd .. / ..
+
+14. unmount /media/rusb 		/unmount
+
+15. Logout of the kernel. 
+
+16. Remove the pendrive
+
+***************************************************END***************************************************************************************
+*********************************************************************************************************************************************
+*********************************************************************************************************************************************ss
+	
